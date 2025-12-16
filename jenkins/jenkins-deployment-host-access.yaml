@@ -1,0 +1,95 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jenkins-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jenkins
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jenkins
+  template:
+    metadata:
+      labels:
+        app: jenkins
+    spec:
+      containers:
+      - name: jenkins
+        image: jenkins/jenkins:lts
+        ports:
+        - containerPort: 8080
+        env:
+        # Allow Jenkins to access host Docker daemon
+        - name: DOCKER_HOST
+          value: "unix:///var/run/docker.sock"
+        volumeMounts:
+        - name: jenkins-home
+          mountPath: /var/jenkins_home
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        - name: minikube-config
+          mountPath: /root/.minikube
+        - name: kube-config
+          mountPath: /root/.kube
+        - name: terraform-bin
+          mountPath: /usr/local/bin/terraform
+          subPath: terraform
+        - name: minikube-bin
+          mountPath: /usr/local/bin/minikube
+          subPath: minikube
+        - name: kubectl-bin
+          mountPath: /usr/local/bin/kubectl
+          subPath: kubectl
+        securityContext:
+          privileged: true  # Required for Docker socket access
+      volumes:
+      - name: jenkins-home
+        persistentVolumeClaim:
+          claimName: jenkins-pvc
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+      - name: minikube-config
+        hostPath:
+          path: /root/.minikube
+          type: DirectoryOrCreate
+      - name: kube-config
+        hostPath:
+          path: /root/.kube
+          type: DirectoryOrCreate
+      - name: terraform-bin
+        hostPath:
+          path: /usr/local/bin/terraform
+          type: FileOrCreate
+      - name: minikube-bin
+        hostPath:
+          path: /usr/local/bin/minikube
+          type: FileOrCreate
+      - name: kubectl-bin
+        hostPath:
+          path: /usr/local/bin/kubectl
+          type: FileOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jenkins-service
+spec:
+  type: NodePort
+  selector:
+    app: jenkins
+  ports:
+    - port: 8080        # cluster port
+      targetPort: 8080  # container port
+      nodePort: 32081   # Different port to avoid conflict with UI service
+
