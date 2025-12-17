@@ -1,0 +1,351 @@
+pipeline {
+    agent any
+    
+    parameters {
+        booleanParam(
+            name: 'ENABLE_PORT_FORWARD',
+            defaultValue: false,
+            description: 'Enable port-forwarding for services after deployment'
+        )
+        string(
+            name: 'MINIKUBE_PROFILE',
+            defaultValue: 'minikube',
+            description: 'Minikube profile name'
+        )
+        choice(
+            name: 'TERRAFORM_WORKSPACE',
+            choices: ['local'],
+            description: 'Terraform workspace to use'
+        )
+    }
+    
+    environment {
+        // GitHub credentials (PAT token stored in Jenkins)
+        GITHUB_PAT = credentials('github-pat-token')
+        
+        // EC2 SSH credentials
+        EC2_SSH_KEY = credentials('ec2-ssh-key')
+        EC2_USER = 'ubuntu'
+        EC2_HOST = credentials('ec2-host-ip')  // Store EC2 IP in Jenkins credentials
+        
+        // Repository details
+        REPO_URL = 'git@github.com:nabeel006/AWS-EC2-Stacks.git'  // Update with your repo
+        REPO_DIR = '/home/ubuntu/AWS-EC2-Stacks'
+        
+        // Minikube settings
+        MINIKUBE_PROFILE = "${params.MINIKUBE_PROFILE}"
+        TERRAFORM_WORKSPACE = "${params.TERRAFORM_WORKSPACE}"
+    }
+    
+    stages {
+        stage('Checkout & Clone to EC2') {
+            steps {
+                script {
+                    echo "=========================================="
+                    echo "Stage 1: Cloning repository to EC2"
+                    echo "=========================================="
+                }
+                
+                sshagent(credentials: ['ec2-ssh-key']) {
+                    sh '''
+                        # Test SSH connection
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "echo 'Connected to EC2 instance'"
+                        
+                        # Clone or pull repository
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
+                            if [ ! -d "${REPO_DIR}" ]; then
+                                echo "Cloning repository..."
+                                git clone https://${GITHUB_PAT}@${REPO_URL} ${REPO_DIR}
+                            else
+                                echo "Repository exists, pulling latest changes..."
+                                cd ${REPO_DIR}
+                                git config --global --add safe.directory ${REPO_DIR}
+                                git pull https://${GITHUB_PAT}@${REPO_URL} || {
+                                    echo "Pull failed, trying to reset..."
+                                    git fetch --all
+                                    git reset --hard origin/main
+                                }
+                            fi
+                            
+                            cd ${REPO_DIR}
+                            echo "Current branch: $(git rev-parse --abbrev-ref HEAD)"
+                            echo "Latest commit: $(git rev-parse --short HEAD)"
+                        '
+                    '''
+                }
+            }
+        }
+        
+        stage('Ensure Minikube is Running on EC2') {
+            steps {
+                script {
+                    echo "=========================================="
+                    echo "Stage 2: Ensuring Minikube is running on EC2"
+                    echo "=========================================="
+                }
+                
+                sshagent(credentials: ['ec2-ssh-key']) {
+                    sh '''
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
+                            # Check if Minikube is running
+                            if minikube status -p ${MINIKUBE_PROFILE} 2>/dev/null | grep -q "Running"; then
+                                echo "✓ Minikube is already running"
+                            else
+                                echo "Starting Minikube..."
+                                minikube start -p ${MINIKUBE_PROFILE} --driver=docker --memory=4096 --cpus=2 || {
+                                    echo "Failed to start Minikube"
+                                    exit 1
+                                }
+                                echo "✓ Minikube started successfully"
+                            fi
+                            
+                            # Get Minikube IP
+                            MINIKUBE_IP=$(minikube ip -p ${MINIKUBE_PROFILE} 2>/dev/null || echo "")
+                            if [ -n "$MINIKUBE_IP" ]; then
+                                echo "Minikube IP: ${MINIKUBE_IP}"
+                            fi
+                            
+                            # Verify kubectl access
+                            kubectl cluster-info || {
+                                echo "ERROR: Cannot access Kubernetes cluster"
+                                exit 1
+                            }
+                        '
+                    '''
+                }
+            }
+        }
+        
+        stage('Build Docker Images on EC2') {
+            steps {
+                script {
+                    echo "=========================================="
+                    echo "Stage 3: Building Docker images on EC2"
+                    echo "=========================================="
+                }
+                
+                sshagent(credentials: ['ec2-ssh-key']) {
+                    sh '''
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
+                            cd ${REPO_DIR}
+                            
+                            # Point Docker to Minikube
+                            eval $(minikube -p ${MINIKUBE_PROFILE} docker-env)
+                            
+                            # List of services to build
+                            SERVICES=("stack" "linkedlist" "graph" "backend" "ui")
+                            
+                            for service in "${SERVICES[@]}"; do
+                                if [ -f "${REPO_DIR}/${service}/Dockerfile" ]; then
+                                    echo "Building ${service}-service:latest..."
+                                    docker build -t ${service}-service:latest ${REPO_DIR}/${service}/ || {
+                                        echo "ERROR: Failed to build ${service}-service"
+                                        exit 1
+                                    }
+                                    echo "✓ Successfully built ${service}-service:latest"
+                                else
+                                    echo "WARNING: Dockerfile not found for ${service}"
+                                fi
+                            done
+                            
+                            echo ""
+                            echo "All images built successfully:"
+                            docker images | grep -E "(stack-service|linkedlist-service|graph-service|backend-service|ui-service)" || true
+                        '
+                    '''
+                }
+            }
+        }
+        
+        stage('Deploy with Terraform on EC2') {
+            steps {
+                script {
+                    echo "=========================================="
+                    echo "Stage 4: Deploying with Terraform on EC2"
+                    echo "=========================================="
+                }
+                
+                sshagent(credentials: ['ec2-ssh-key']) {
+                    sh '''
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
+                            cd ${REPO_DIR}/terraform/${TERRAFORM_WORKSPACE}
+                            
+                            # Ensure kubectl context is set to Minikube
+                            kubectl config use-context ${MINIKUBE_PROFILE} || {
+                                echo "WARNING: Could not set kubectl context, continuing..."
+                            }
+                            
+                            echo "Running terraform init..."
+                            terraform init || {
+                                echo "ERROR: Terraform init failed"
+                                exit 1
+                            }
+                            echo "✓ Terraform initialized"
+                            
+                            echo ""
+                            echo "Running terraform apply..."
+                            terraform apply -auto-approve || {
+                                echo "ERROR: Terraform apply failed"
+                                exit 1
+                            }
+                            echo "✓ Terraform apply completed successfully"
+                        '
+                    '''
+                }
+            }
+        }
+        
+        stage('Verify Deployment on EC2') {
+            steps {
+                script {
+                    echo "=========================================="
+                    echo "Stage 5: Verifying deployment on EC2"
+                    echo "=========================================="
+                }
+                
+                sshagent(credentials: ['ec2-ssh-key']) {
+                    sh '''
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
+                            # Wait for pods to be ready
+                            echo "Waiting for pods to be ready..."
+                            MAX_RETRIES=40
+                            RETRY_COUNT=0
+                            
+                            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+                                PODS=$(kubectl get pods --no-headers 2>/dev/null)
+                                
+                                if [ -z "$PODS" ]; then
+                                    echo "No pods found yet, waiting..."
+                                    sleep 5
+                                    RETRY_COUNT=$((RETRY_COUNT + 1))
+                                    continue
+                                fi
+                                
+                                NOT_READY=$(echo "$PODS" | grep -v "Running" | grep -v "Completed" | wc -l | tr -d " ")
+                                
+                                if [ "$NOT_READY" -eq 0 ] && [ -n "$PODS" ]; then
+                                    echo "✓ All pods are Running!"
+                                    break
+                                fi
+                                
+                                if [ $((RETRY_COUNT % 5)) -eq 0 ]; then
+                                    echo "Still waiting for pods... (attempt $RETRY_COUNT/$MAX_RETRIES)"
+                                    kubectl get pods || true
+                                fi
+                                
+                                sleep 3
+                                RETRY_COUNT=$((RETRY_COUNT + 1))
+                            done
+                            
+                            if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                                echo "WARNING: Timeout waiting for pods. Current status:"
+                                kubectl get pods || true
+                            fi
+                            
+                            echo ""
+                            echo "=== Pod Status ==="
+                            kubectl get pods || true
+                            
+                            echo ""
+                            echo "=== Service Status ==="
+                            kubectl get services || true
+                            
+                            echo ""
+                            echo "=== Deployment Status ==="
+                            kubectl get deployments || true
+                            
+                            # Get access URLs
+                            MINIKUBE_IP=$(minikube ip -p ${MINIKUBE_PROFILE} 2>/dev/null || echo "unknown")
+                            
+                            echo ""
+                            echo "=========================================="
+                            echo "Access URLs:"
+                            echo "=========================================="
+                            echo "Web UI:      http://${MINIKUBE_IP}:32080/"
+                            echo "Backend API: http://${MINIKUBE_IP}:32080/api/dashboard"
+                            echo ""
+                            echo "To access from outside EC2, use:"
+                            echo "Web UI:      http://${EC2_HOST}:32080/"
+                            echo "Backend API: http://${EC2_HOST}:32080/api/dashboard"
+                            echo ""
+                        '
+                    '''
+                }
+            }
+        }
+        
+        stage('Optional Port-Forward') {
+            when {
+                expression { 
+                    return params.ENABLE_PORT_FORWARD.toBoolean()
+                }
+            }
+            steps {
+                script {
+                    echo "=========================================="
+                    echo "Stage 6: Setting up port-forward (Optional)"
+                    echo "=========================================="
+                }
+                
+                sshagent(credentials: ['ec2-ssh-key']) {
+                    sh '''
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
+                            echo "Port-forward is enabled. Setting up port-forwards..."
+                            
+                            # Kill existing port-forwards
+                            pkill -f "kubectl port-forward" || true
+                            
+                            # Port-forward UI service
+                            nohup kubectl port-forward svc/ui-service 8080:80 --address=0.0.0.0 > /tmp/ui-port-forward.log 2>&1 &
+                            echo "✓ UI service port-forward: http://${EC2_HOST}:8080"
+                            
+                            # Port-forward Backend service
+                            nohup kubectl port-forward svc/backend-service 5000:5000 --address=0.0.0.0 > /tmp/backend-port-forward.log 2>&1 &
+                            echo "✓ Backend service port-forward: http://${EC2_HOST}:5000"
+                            
+                            echo ""
+                            echo "Port-forwards are running. Access services at:"
+                            echo "  - UI:      http://${EC2_HOST}:8080"
+                            echo "  - Backend: http://${EC2_HOST}:5000"
+                        '
+                    '''
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo "=========================================="
+            echo "Pipeline completed successfully! ✓"
+            echo "=========================================="
+            echo "Application deployed on EC2 instance: ${EC2_HOST}"
+            echo "Access the application at: http://${EC2_HOST}:32080"
+        }
+        failure {
+            echo "=========================================="
+            echo "Pipeline failed! ✗"
+            echo "=========================================="
+            
+            sshagent(credentials: ['ec2-ssh-key']) {
+                sh '''
+                    ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
+                        echo "Debugging information:"
+                        echo ""
+                        echo "=== Pod Status ==="
+                        kubectl get pods || true
+                        echo ""
+                        echo "=== Pod Logs (last 20 lines) ==="
+                        for pod in $(kubectl get pods -o jsonpath="{.items[*].metadata.name}"); do
+                            echo "--- Logs for $pod ---"
+                            kubectl logs --tail=20 $pod || true
+                        done
+                    '
+                '''
+            }
+        }
+        always {
+            echo "Pipeline execution completed."
+        }
+    }
+}
