@@ -340,26 +340,31 @@ pipeline {
                             pkill -f 'kubectl port-forward' || true
                             sleep 1
                             
-                            # Create a systemd service for persistent port-forward
-                            sudo tee /etc/systemd/system/k8s-port-forward.service > /dev/null << 'EOF'
-[Unit]
-Description=Kubernetes Port Forward for Ingress
-After=network.target
-
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu
-ExecStart=/usr/bin/kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 32080:80 --address=0.0.0.0
-Restart=always
-RestartSec=5
-StandardOutput=append:/tmp/ingress-port-forward.log
-StandardError=append:/tmp/ingress-port-forward.log
-
-[Install]
-WantedBy=multi-user.target
-EOF
+                            # Get kubectl path
+                            KUBECTL_PATH=\\$(which kubectl)
                             
+                            # Create a systemd service for persistent port-forward
+                            sudo tee /etc/systemd/system/k8s-port-forward.service > /dev/null << EOF
+                            
+                            [Unit]
+                            Description=Kubernetes Port Forward for Ingress
+                            After=network.target
+
+                            [Service]
+                            Type=simple
+                            User=ubuntu
+                            WorkingDirectory=/home/ubuntu
+                            Environment="KUBECONFIG=/home/ubuntu/.kube/config"
+                            ExecStart=\\${KUBECTL_PATH} port-forward -n ingress-nginx svc/ingress-nginx-controller 32080:80 --address=0.0.0.0
+                            Restart=always
+                            RestartSec=5
+                            StandardOutput=append:/tmp/ingress-port-forward.log
+                            StandardError=append:/tmp/ingress-port-forward.log
+
+                            [Install]
+                            WantedBy=multi-user.target
+                            EOF
+                                                        
                             # Reload systemd and start the service
                             sudo systemctl daemon-reload
                             sudo systemctl enable k8s-port-forward.service
