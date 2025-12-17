@@ -2,6 +2,11 @@ pipeline {
     agent any
     
     parameters {
+        string(
+            name: 'BRANCH_NAME',
+            defaultValue: 'dev',
+            description: 'Git branch to deploy'
+        )
         booleanParam(
             name: 'ENABLE_PORT_FORWARD',
             defaultValue: false,
@@ -56,18 +61,20 @@ pipeline {
                             REPO_DIR='${REPO_DIR}'
                             REPO_URL='${REPO_URL}'
                             GITHUB_PAT='${GITHUB_PAT}'
+                            BRANCH_NAME='${BRANCH_NAME}'
                             
                             if [ ! -d \\"\\${REPO_DIR}\\" ]; then
-                                echo 'Cloning repository...'
-                                git clone https://\\${GITHUB_PAT}@\\${REPO_URL} \\${REPO_DIR}
+                                echo 'Cloning repository from branch: \\${BRANCH_NAME}...'
+                                git clone -b \\${BRANCH_NAME} https://\\${GITHUB_PAT}@\\${REPO_URL} \\${REPO_DIR}
                             else
-                                echo 'Repository exists, pulling latest changes...'
+                                echo 'Repository exists, pulling latest changes from branch: \\${BRANCH_NAME}...'
                                 cd \\${REPO_DIR}
                                 git config --global --add safe.directory \\${REPO_DIR}
-                                git pull https://\\${GITHUB_PAT}@\\${REPO_URL} || {
+                                git checkout \\${BRANCH_NAME} || git checkout -b \\${BRANCH_NAME} origin/\\${BRANCH_NAME}
+                                git pull https://\\${GITHUB_PAT}@\\${REPO_URL} \\${BRANCH_NAME} || {
                                     echo 'Pull failed, trying to reset...'
                                     git fetch --all
-                                    git reset --hard origin/dev
+                                    git reset --hard origin/\\${BRANCH_NAME}
                                 }
                             fi
                             
