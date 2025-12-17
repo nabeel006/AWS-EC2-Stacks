@@ -228,70 +228,91 @@ pipeline {
                 
                 sshagent(credentials: ['ec2-ssh-key']) {
                     sh '''
-                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "
+                            REPO_DIR='${REPO_DIR}'
+                            MINIKUBE_PROFILE='${MINIKUBE_PROFILE}'
+                            
+                            # Verify Git branch
+                            echo '=========================================='
+                            echo 'Git Repository Status:'
+                            echo '=========================================='
+                            cd \\${REPO_DIR}
+                            echo 'Current branch:' \\$(git branch --show-current)
+                            echo 'Latest commit:' \\$(git log -1 --oneline)
+                            echo ''
+                            
                             # Wait for pods to be ready
-                            echo "Waiting for pods to be ready..."
+                            echo 'Waiting for pods to be ready...'
                             MAX_RETRIES=40
                             RETRY_COUNT=0
                             
-                            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-                                PODS=$(kubectl get pods --no-headers 2>/dev/null)
+                            while [ \\$RETRY_COUNT -lt \\$MAX_RETRIES ]; do
+                                PODS=\\$(kubectl get pods --no-headers 2>/dev/null)
                                 
-                                if [ -z "$PODS" ]; then
-                                    echo "No pods found yet, waiting..."
+                                if [ -z \\"\\$PODS\\" ]; then
+                                    echo 'No pods found yet, waiting...'
                                     sleep 5
-                                    RETRY_COUNT=$((RETRY_COUNT + 1))
+                                    RETRY_COUNT=\\$((RETRY_COUNT + 1))
                                     continue
                                 fi
                                 
-                                NOT_READY=$(echo "$PODS" | grep -v "Running" | grep -v "Completed" | wc -l | tr -d " ")
+                                NOT_READY=\\$(echo \\"\\$PODS\\" | grep -v 'Running' | grep -v 'Completed' | wc -l | tr -d ' ')
                                 
-                                if [ "$NOT_READY" -eq 0 ] && [ -n "$PODS" ]; then
-                                    echo "✓ All pods are Running!"
+                                if [ \\"\\$NOT_READY\\" -eq 0 ] && [ -n \\"\\$PODS\\" ]; then
+                                    echo '✓ All pods are Running!'
                                     break
                                 fi
                                 
-                                if [ $((RETRY_COUNT % 5)) -eq 0 ]; then
-                                    echo "Still waiting for pods... (attempt $RETRY_COUNT/$MAX_RETRIES)"
+                                if [ \\$((RETRY_COUNT % 5)) -eq 0 ]; then
+                                    echo \\"Still waiting for pods... (attempt \\$RETRY_COUNT/\\$MAX_RETRIES)\\"
                                     kubectl get pods || true
                                 fi
                                 
                                 sleep 3
-                                RETRY_COUNT=$((RETRY_COUNT + 1))
+                                RETRY_COUNT=\\$((RETRY_COUNT + 1))
                             done
                             
-                            if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-                                echo "WARNING: Timeout waiting for pods. Current status:"
+                            if [ \\$RETRY_COUNT -ge \\$MAX_RETRIES ]; then
+                                echo 'WARNING: Timeout waiting for pods. Current status:'
                                 kubectl get pods || true
                             fi
                             
-                            echo ""
-                            echo "=== Pod Status ==="
-                            kubectl get pods || true
+                            echo ''
+                            echo '=========================================='
+                            echo 'Kubernetes Resources Status:'
+                            echo '=========================================='
                             
-                            echo ""
-                            echo "=== Service Status ==="
+                            echo ''
+                            echo '=== Pods (default namespace) ==='
+                            kubectl get pods -o wide || true
+                            
+                            echo ''
+                            echo '=== Pods (ingress-nginx namespace) ==='
+                            kubectl get pods -n ingress-nginx -o wide || true
+                            
+                            echo ''
+                            echo '=== Services ==='
                             kubectl get services || true
                             
-                            echo ""
-                            echo "=== Deployment Status ==="
+                            echo ''
+                            echo '=== Deployments ==='
                             kubectl get deployments || true
                             
-                            # Get access URLs
-                            MINIKUBE_IP=$(minikube ip -p '"${MINIKUBE_PROFILE}"' 2>/dev/null || echo "unknown")
+                            echo ''
+                            echo '=== Ingress ==='
+                            kubectl get ingress || true
                             
-                            echo ""
-                            echo "=========================================="
-                            echo "Access URLs:"
-                            echo "=========================================="
-                            echo "Web UI:      http://${MINIKUBE_IP}:32080/"
-                            echo "Backend API: http://${MINIKUBE_IP}:32080/api/dashboard"
-                            echo ""
-                            echo "To access from outside EC2, use:"
-                            echo "Web UI:      http://${EC2_HOST}:32080/"
-                            echo "Backend API: http://${EC2_HOST}:32080/api/dashboard"
-                            echo ""
-                        '
+                            # Get access URLs
+                            MINIKUBE_IP=\\$(minikube ip -p \\${MINIKUBE_PROFILE} 2>/dev/null || echo 'unknown')
+                            
+                            echo ''
+                            echo '=========================================='
+                            echo 'Access URLs:'
+                            echo '=========================================='
+                            echo \\"Internal (Minikube): http://\\${MINIKUBE_IP}:32080/\\"
+                            echo \\"External (EC2):      http://${EC2_HOST}:32080/\\"
+                            echo ''
+                        "
                     '''
                 }
             }
@@ -312,25 +333,59 @@ pipeline {
                 
                 sshagent(credentials: ['ec2-ssh-key']) {
                     sh '''
-                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
-                            echo "Port-forward is enabled. Setting up port-forward..."
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "
+                            echo 'Port-forward is enabled. Setting up port-forward...'
                             
                             # Kill existing port-forwards
-                            pkill -f "kubectl port-forward" || true
+                            pkill -f 'kubectl port-forward' || true
+                            sleep 1
                             
                             # Port-forward ingress-nginx controller to expose on public IP
                             nohup kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 32080:80 --address=0.0.0.0 > /tmp/ingress-port-forward.log 2>&1 &
+                            PF_PID=\\$!
                             
-                            # Wait a moment for port-forward to establish
-                            sleep 2
+                            # Wait for port-forward to establish
+                            sleep 3
                             
-                            echo "✓ Ingress controller port-forward established"
-                            echo ""
-                            echo "Application is now accessible at:"
-                            echo "  - http://${EC2_HOST}:32080/"
-                            echo ""
-                            echo "Port-forward logs: /tmp/ingress-port-forward.log"
-                        '
+                            # Verify port-forward is running
+                            if ps -p \\$PF_PID > /dev/null 2>&1; then
+                                echo '✓ Port-forward process is running (PID: '\\$PF_PID')'
+                            else
+                                echo '✗ Port-forward process failed to start'
+                                cat /tmp/ingress-port-forward.log
+                                exit 1
+                            fi
+                            
+                            # Check if port is listening
+                            if netstat -tuln | grep ':32080' > /dev/null 2>&1; then
+                                echo '✓ Port 32080 is listening'
+                            else
+                                echo '⚠ Port 32080 is not listening yet, checking logs...'
+                                cat /tmp/ingress-port-forward.log
+                            fi
+                            
+                            # Test local connection
+                            if curl -s -o /dev/null -w '%{http_code}' http://localhost:32080 | grep -q '200'; then
+                                echo '✓ Local connection test successful'
+                            else
+                                echo '⚠ Local connection test failed'
+                            fi
+                            
+                            echo ''
+                            echo '=========================================='
+                            echo 'Port-Forward Status:'
+                            echo '=========================================='
+                            echo 'Process ID: '\\$PF_PID
+                            echo 'Log file: /tmp/ingress-port-forward.log'
+                            echo ''
+                            echo 'Application is now accessible at:'
+                            echo '  - http://${EC2_HOST}:32080/'
+                            echo ''
+                            echo 'To check port-forward status:'
+                            echo '  ps aux | grep kubectl'
+                            echo '  netstat -tuln | grep 32080'
+                            echo '  tail -f /tmp/ingress-port-forward.log'
+                        "
                     '''
                 }
             }
