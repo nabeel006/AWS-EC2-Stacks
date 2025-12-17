@@ -186,6 +186,11 @@ pipeline {
                                 echo 'WARNING: Could not set kubectl context, continuing...'
                             }
                             
+                            # Clean up old ingress controller deployment if it exists
+                            echo 'Cleaning up old ingress controller...'
+                            kubectl delete deployment ingress-nginx-controller -n ingress-nginx --ignore-not-found=true
+                            sleep 2
+                            
                             echo 'Running terraform init...'
                             terraform init || {
                                 echo 'ERROR: Terraform init failed'
