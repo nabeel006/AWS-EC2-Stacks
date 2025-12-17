@@ -70,11 +70,6 @@ data "kubectl_file_documents" "ingress_controller" {
 }
 
 resource "kubectl_manifest" "ingress_controller" {
-  for_each         = data.kubectl_file_documents.ingress_controller.manifests
-  yaml_body        = each.value
-  wait_for_rollout = true
-  timeouts {
-    create = "10m"
-    update = "10m"
-  }
+  for_each  = data.kubectl_file_documents.ingress_controller.manifests
+  yaml_body = each.value
 }
