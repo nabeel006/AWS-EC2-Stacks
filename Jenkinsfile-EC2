@@ -9,8 +9,8 @@ pipeline {
         )
         booleanParam(
             name: 'ENABLE_PORT_FORWARD',
-            defaultValue: false,
-            description: 'Enable port-forwarding for services after deployment'
+            defaultValue: true,
+            description: 'Enable port-forwarding to expose application on EC2 public IP'
         )
         string(
             name: 'MINIKUBE_PROFILE',
@@ -313,23 +313,23 @@ pipeline {
                 sshagent(credentials: ['ec2-ssh-key']) {
                     sh '''
                         ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
-                            echo "Port-forward is enabled. Setting up port-forwards..."
+                            echo "Port-forward is enabled. Setting up port-forward..."
                             
                             # Kill existing port-forwards
                             pkill -f "kubectl port-forward" || true
                             
-                            # Port-forward UI service
-                            nohup kubectl port-forward svc/ui-service 8080:80 --address=0.0.0.0 > /tmp/ui-port-forward.log 2>&1 &
-                            echo "✓ UI service port-forward: http://${EC2_HOST}:8080"
+                            # Port-forward ingress-nginx controller to expose on public IP
+                            nohup kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 32080:80 --address=0.0.0.0 > /tmp/ingress-port-forward.log 2>&1 &
                             
-                            # Port-forward Backend service
-                            nohup kubectl port-forward svc/backend-service 5000:5000 --address=0.0.0.0 > /tmp/backend-port-forward.log 2>&1 &
-                            echo "✓ Backend service port-forward: http://${EC2_HOST}:5000"
+                            # Wait a moment for port-forward to establish
+                            sleep 2
                             
+                            echo "✓ Ingress controller port-forward established"
                             echo ""
-                            echo "Port-forwards are running. Access services at:"
-                            echo "  - UI:      http://${EC2_HOST}:8080"
-                            echo "  - Backend: http://${EC2_HOST}:5000"
+                            echo "Application is now accessible at:"
+                            echo "  - http://${EC2_HOST}:32080/"
+                            echo ""
+                            echo "Port-forward logs: /tmp/ingress-port-forward.log"
                         '
                     '''
                 }
