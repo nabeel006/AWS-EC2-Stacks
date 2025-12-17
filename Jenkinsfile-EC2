@@ -53,21 +53,25 @@ pipeline {
                         
                         # Clone or pull repository
                         ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "
-                            if [ ! -d '${REPO_DIR}' ]; then
+                            REPO_DIR='${REPO_DIR}'
+                            REPO_URL='${REPO_URL}'
+                            GITHUB_PAT='${GITHUB_PAT}'
+                            
+                            if [ ! -d \\"\\${REPO_DIR}\\" ]; then
                                 echo 'Cloning repository...'
-                                git clone https://${GITHUB_PAT}@${REPO_URL} ${REPO_DIR}
+                                git clone https://\\${GITHUB_PAT}@\\${REPO_URL} \\${REPO_DIR}
                             else
                                 echo 'Repository exists, pulling latest changes...'
-                                cd ${REPO_DIR}
-                                git config --global --add safe.directory ${REPO_DIR}
-                                git pull https://${GITHUB_PAT}@${REPO_URL} || {
+                                cd \\${REPO_DIR}
+                                git config --global --add safe.directory \\${REPO_DIR}
+                                git pull https://\\${GITHUB_PAT}@\\${REPO_URL} || {
                                     echo 'Pull failed, trying to reset...'
                                     git fetch --all
                                     git reset --hard origin/dev
                                 }
                             fi
                             
-                            cd ${REPO_DIR}
+                            cd \\${REPO_DIR}
                             echo 'Current branch:' \\$(git rev-parse --abbrev-ref HEAD)
                             echo 'Latest commit:' \\$(git rev-parse --short HEAD)
                         "
@@ -127,18 +131,21 @@ pipeline {
                 sshagent(credentials: ['ec2-ssh-key']) {
                     sh '''
                         ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "
-                            cd ${REPO_DIR}
+                            REPO_DIR='${REPO_DIR}'
+                            MINIKUBE_PROFILE='${MINIKUBE_PROFILE}'
+                            
+                            cd \\${REPO_DIR}
                             
                             # Point Docker to Minikube
-                            eval \\$(minikube -p ${MINIKUBE_PROFILE} docker-env)
+                            eval \\$(minikube -p \\${MINIKUBE_PROFILE} docker-env)
                             
                             # List of services to build
                             SERVICES=('stack' 'linkedlist' 'graph' 'backend' 'ui')
                             
                             for service in \\${SERVICES[@]}; do
-                                if [ -f '${REPO_DIR}/\\${service}/Dockerfile' ]; then
+                                if [ -f \\${REPO_DIR}/\\${service}/Dockerfile ]; then
                                     echo 'Building \\${service}-service:latest...'
-                                    docker build -t \\${service}-service:latest ${REPO_DIR}/\\${service}/ || {
+                                    docker build -t \\${service}-service:latest \\${REPO_DIR}/\\${service}/ || {
                                         echo 'ERROR: Failed to build \\${service}-service'
                                         exit 1
                                     }
@@ -168,10 +175,14 @@ pipeline {
                 sshagent(credentials: ['ec2-ssh-key']) {
                     sh '''
                         ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "
-                            cd ${REPO_DIR}/terraform/${TERRAFORM_WORKSPACE}
+                            REPO_DIR='${REPO_DIR}'
+                            TERRAFORM_WORKSPACE='${TERRAFORM_WORKSPACE}'
+                            MINIKUBE_PROFILE='${MINIKUBE_PROFILE}'
+                            
+                            cd \\${REPO_DIR}/terraform/\\${TERRAFORM_WORKSPACE}
                             
                             # Ensure kubectl context is set to Minikube
-                            kubectl config use-context ${MINIKUBE_PROFILE} || {
+                            kubectl config use-context \\${MINIKUBE_PROFILE} || {
                                 echo 'WARNING: Could not set kubectl context, continuing...'
                             }
                             
