@@ -52,25 +52,25 @@ pipeline {
                         ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "echo 'Connected to EC2 instance'"
                         
                         # Clone or pull repository
-                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
-                            if [ ! -d "${REPO_DIR}" ]; then
-                                echo "Cloning repository..."
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "
+                            if [ ! -d '${REPO_DIR}' ]; then
+                                echo 'Cloning repository...'
                                 git clone https://${GITHUB_PAT}@${REPO_URL} ${REPO_DIR}
                             else
-                                echo "Repository exists, pulling latest changes..."
+                                echo 'Repository exists, pulling latest changes...'
                                 cd ${REPO_DIR}
                                 git config --global --add safe.directory ${REPO_DIR}
                                 git pull https://${GITHUB_PAT}@${REPO_URL} || {
-                                    echo "Pull failed, trying to reset..."
+                                    echo 'Pull failed, trying to reset...'
                                     git fetch --all
-                                    git reset --hard origin/main
+                                    git reset --hard origin/dev
                                 }
                             fi
                             
                             cd ${REPO_DIR}
-                            echo "Current branch: $(git rev-parse --abbrev-ref HEAD)"
-                            echo "Latest commit: $(git rev-parse --short HEAD)"
-                        '
+                            echo 'Current branch:' \\$(git rev-parse --abbrev-ref HEAD)
+                            echo 'Latest commit:' \\$(git rev-parse --short HEAD)
+                        "
                     '''
                 }
             }
@@ -86,31 +86,31 @@ pipeline {
                 
                 sshagent(credentials: ['ec2-ssh-key']) {
                     sh '''
-                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "
                             # Check if Minikube is running
-                            if minikube status -p '"${MINIKUBE_PROFILE}"' 2>/dev/null | grep -q "Running"; then
-                                echo "✓ Minikube is already running"
+                            if minikube status -p ${MINIKUBE_PROFILE} 2>/dev/null | grep -q 'Running'; then
+                                echo '✓ Minikube is already running'
                             else
-                                echo "Starting Minikube..."
-                                minikube start -p '"${MINIKUBE_PROFILE}"' --driver=docker --memory=4096 --cpus=2 || {
-                                    echo "Failed to start Minikube"
+                                echo 'Starting Minikube...'
+                                minikube start -p ${MINIKUBE_PROFILE} --driver=docker --memory=4096 --cpus=2 || {
+                                    echo 'Failed to start Minikube'
                                     exit 1
                                 }
-                                echo "✓ Minikube started successfully"
+                                echo '✓ Minikube started successfully'
                             fi
                             
                             # Get Minikube IP
-                            MINIKUBE_IP=$(minikube ip -p '"${MINIKUBE_PROFILE}"' 2>/dev/null || echo "")
-                            if [ -n "$MINIKUBE_IP" ]; then
-                                echo "Minikube IP: ${MINIKUBE_IP}"
+                            MINIKUBE_IP=\\$(minikube ip -p ${MINIKUBE_PROFILE} 2>/dev/null || echo '')
+                            if [ -n \\"\\$MINIKUBE_IP\\" ]; then
+                                echo \\"Minikube IP: \\$MINIKUBE_IP\\"
                             fi
                             
                             # Verify kubectl access
                             kubectl cluster-info || {
-                                echo "ERROR: Cannot access Kubernetes cluster"
+                                echo 'ERROR: Cannot access Kubernetes cluster'
                                 exit 1
                             }
-                        '
+                        "
                     '''
                 }
             }
@@ -126,32 +126,32 @@ pipeline {
                 
                 sshagent(credentials: ['ec2-ssh-key']) {
                     sh '''
-                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "
                             cd ${REPO_DIR}
                             
                             # Point Docker to Minikube
-                            eval $(minikube -p '"${MINIKUBE_PROFILE}"' docker-env)
+                            eval \\$(minikube -p ${MINIKUBE_PROFILE} docker-env)
                             
                             # List of services to build
-                            SERVICES=("stack" "linkedlist" "graph" "backend" "ui")
+                            SERVICES=('stack' 'linkedlist' 'graph' 'backend' 'ui')
                             
-                            for service in "${SERVICES[@]}"; do
-                                if [ -f "${REPO_DIR}/${service}/Dockerfile" ]; then
-                                    echo "Building ${service}-service:latest..."
-                                    docker build -t ${service}-service:latest ${REPO_DIR}/${service}/ || {
-                                        echo "ERROR: Failed to build ${service}-service"
+                            for service in \\${SERVICES[@]}; do
+                                if [ -f '${REPO_DIR}/\\${service}/Dockerfile' ]; then
+                                    echo 'Building \\${service}-service:latest...'
+                                    docker build -t \\${service}-service:latest ${REPO_DIR}/\\${service}/ || {
+                                        echo 'ERROR: Failed to build \\${service}-service'
                                         exit 1
                                     }
-                                    echo "✓ Successfully built ${service}-service:latest"
+                                    echo '✓ Successfully built \\${service}-service:latest'
                                 else
-                                    echo "WARNING: Dockerfile not found for ${service}"
+                                    echo 'WARNING: Dockerfile not found for \\${service}'
                                 fi
                             done
                             
-                            echo ""
-                            echo "All images built successfully:"
-                            docker images | grep -E "(stack-service|linkedlist-service|graph-service|backend-service|ui-service)" || true
-                        '
+                            echo ''
+                            echo 'All images built successfully:'
+                            docker images | grep -E '(stack-service|linkedlist-service|graph-service|backend-service|ui-service)' || true
+                        "
                     '''
                 }
             }
@@ -167,29 +167,29 @@ pipeline {
                 
                 sshagent(credentials: ['ec2-ssh-key']) {
                     sh '''
-                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
+                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "
                             cd ${REPO_DIR}/terraform/${TERRAFORM_WORKSPACE}
                             
                             # Ensure kubectl context is set to Minikube
-                            kubectl config use-context '"${MINIKUBE_PROFILE}"' || {
-                                echo "WARNING: Could not set kubectl context, continuing..."
+                            kubectl config use-context ${MINIKUBE_PROFILE} || {
+                                echo 'WARNING: Could not set kubectl context, continuing...'
                             }
                             
-                            echo "Running terraform init..."
+                            echo 'Running terraform init...'
                             terraform init || {
-                                echo "ERROR: Terraform init failed"
+                                echo 'ERROR: Terraform init failed'
                                 exit 1
                             }
-                            echo "✓ Terraform initialized"
+                            echo '✓ Terraform initialized'
                             
-                            echo ""
-                            echo "Running terraform apply..."
+                            echo ''
+                            echo 'Running terraform apply...'
                             terraform apply -auto-approve || {
-                                echo "ERROR: Terraform apply failed"
+                                echo 'ERROR: Terraform apply failed'
                                 exit 1
                             }
-                            echo "✓ Terraform apply completed successfully"
-                        '
+                            echo '✓ Terraform apply completed successfully'
+                        "
                     '''
                 }
             }
