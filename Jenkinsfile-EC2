@@ -29,7 +29,7 @@ pipeline {
         EC2_HOST = credentials('ec2-host-ip')  // Store EC2 IP in Jenkins credentials
         
         // Repository details
-        REPO_URL = 'git@github.com:nabeel006/AWS-EC2-Stacks.git'  // Update with your repo
+        REPO_URL = 'github.com/nabeel006/AWS-EC2-Stacks.git'
         REPO_DIR = '/home/ubuntu/AWS-EC2-Stacks'
         
         // Minikube settings
@@ -88,11 +88,11 @@ pipeline {
                     sh '''
                         ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} '
                             # Check if Minikube is running
-                            if minikube status -p ${MINIKUBE_PROFILE} 2>/dev/null | grep -q "Running"; then
+                            if minikube status -p '"${MINIKUBE_PROFILE}"' 2>/dev/null | grep -q "Running"; then
                                 echo "✓ Minikube is already running"
                             else
                                 echo "Starting Minikube..."
-                                minikube start -p ${MINIKUBE_PROFILE} --driver=docker --memory=4096 --cpus=2 || {
+                                minikube start -p '"${MINIKUBE_PROFILE}"' --driver=docker --memory=4096 --cpus=2 || {
                                     echo "Failed to start Minikube"
                                     exit 1
                                 }
@@ -100,7 +100,7 @@ pipeline {
                             fi
                             
                             # Get Minikube IP
-                            MINIKUBE_IP=$(minikube ip -p ${MINIKUBE_PROFILE} 2>/dev/null || echo "")
+                            MINIKUBE_IP=$(minikube ip -p '"${MINIKUBE_PROFILE}"' 2>/dev/null || echo "")
                             if [ -n "$MINIKUBE_IP" ]; then
                                 echo "Minikube IP: ${MINIKUBE_IP}"
                             fi
@@ -130,7 +130,7 @@ pipeline {
                             cd ${REPO_DIR}
                             
                             # Point Docker to Minikube
-                            eval $(minikube -p ${MINIKUBE_PROFILE} docker-env)
+                            eval $(minikube -p '"${MINIKUBE_PROFILE}"' docker-env)
                             
                             # List of services to build
                             SERVICES=("stack" "linkedlist" "graph" "backend" "ui")
@@ -171,7 +171,7 @@ pipeline {
                             cd ${REPO_DIR}/terraform/${TERRAFORM_WORKSPACE}
                             
                             # Ensure kubectl context is set to Minikube
-                            kubectl config use-context ${MINIKUBE_PROFILE} || {
+                            kubectl config use-context '"${MINIKUBE_PROFILE}"' || {
                                 echo "WARNING: Could not set kubectl context, continuing..."
                             }
                             
@@ -255,7 +255,7 @@ pipeline {
                             kubectl get deployments || true
                             
                             # Get access URLs
-                            MINIKUBE_IP=$(minikube ip -p ${MINIKUBE_PROFILE} 2>/dev/null || echo "unknown")
+                            MINIKUBE_IP=$(minikube ip -p '"${MINIKUBE_PROFILE}"' 2>/dev/null || echo "unknown")
                             
                             echo ""
                             echo "=========================================="
